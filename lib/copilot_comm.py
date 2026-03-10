@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ccb_config import apply_backend_env
 from pane_registry import upsert_registry
 from project_id import compute_ccb_project_id
-from session_utils import find_project_session_file, safe_write_session
+from session_utils import find_project_session_file
 from terminal import get_backend_for_session, get_pane_id_from_session
 
 apply_backend_env()
@@ -346,7 +346,7 @@ class CopilotCommunicator:
         self.session_info = self._load_session_info()
         if not self.session_info:
             raise RuntimeError(
-                "No active Copilot session found. "
+                "❌ No active Copilot session found. "
                 "Run 'ccb copilot' (or add copilot to ccb.config) first"
             )
 
@@ -358,7 +358,6 @@ class CopilotCommunicator:
         self.timeout = int(
             os.environ.get("COPILOT_SYNC_TIMEOUT", os.environ.get("CCB_SYNC_TIMEOUT", "3600"))
         )
-        self.marker_prefix = "hask"
         self.project_session_file = self.session_info.get("_session_file")
 
         self._log_reader: Optional[CopilotLogReader] = None
@@ -378,7 +377,7 @@ class CopilotCommunicator:
             healthy, msg = self._check_session_health()
             if not healthy:
                 raise RuntimeError(
-                    f"Session unhealthy: {msg}\n"
+                    f"❌ Session unhealthy: {msg}\n"
                     "Hint: run ccb copilot (or add copilot to ccb.config) to start a new session"
                 )
 
@@ -386,7 +385,8 @@ class CopilotCommunicator:
     def log_reader(self) -> CopilotLogReader:
         if self._log_reader is None:
             self._ensure_log_reader()
-        return self._log_reader  # type: ignore[return-value]
+        assert self._log_reader is not None
+        return self._log_reader
 
     def _ensure_log_reader(self) -> None:
         if self._log_reader is not None:
@@ -482,8 +482,8 @@ class CopilotCommunicator:
     def ping(self, display: bool = True) -> Tuple[bool, str]:
         healthy, status = self._check_session_health()
         msg = (
-            f"Copilot connection OK ({status})" if healthy
-            else f"Copilot connection error: {status}"
+            f"✅ Copilot connection OK ({status})" if healthy
+            else f"❌ Copilot connection error: {status}"
         )
         if display:
             print(msg)

@@ -294,8 +294,14 @@ def main(argv: list[str]) -> int:
         droid_session_id = (os.environ.get("DROID_SESSION_ID") or "").strip() or f"stub-{uuid.uuid4().hex}"
         _ensure_droid_session_start(droid_session_path, droid_session_id, os.getcwd())
     elif provider == "copilot":
-        copilot_session_path = _droid_session_path()  # Reuse droid-style JSONL for stub
         copilot_session_id = (os.environ.get("COPILOT_SESSION_ID") or "").strip() or f"stub-{uuid.uuid4().hex}"
+        explicit = (os.environ.get("COPILOT_SESSION_PATH") or "").strip()
+        if explicit:
+            copilot_session_path = Path(explicit).expanduser()
+        else:
+            root = _droid_sessions_root()
+            slug = _droid_slug(Path.cwd())
+            copilot_session_path = root / slug / f"copilot-{copilot_session_id}.jsonl"
         _ensure_droid_session_start(copilot_session_path, copilot_session_id, os.getcwd())
 
     def _handle_request(req_id: str, prompt: str) -> None:
