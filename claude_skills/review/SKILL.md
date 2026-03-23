@@ -31,6 +31,8 @@ Deterministic dual review via `ccb-review` script. Claude and cross-reviewer (de
 
 ## Rules
 
+- When `/review` is triggered, you MUST execute the full 3-step flow above. No exceptions — regardless of whether the content is code changes, data analysis, architecture decisions, or any other topic.
+- NEVER skip `ccb-review` or do the review purely by yourself. The cross-review is mandatory.
 - ALWAYS use `ccb-review` for the cross-review step. NEVER call providers yourself.
 - The script handles: sending to reviewer, waiting for response, merging verdicts.
 - You only do your own assessment, then hand off to the script.
