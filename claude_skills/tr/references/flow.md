@@ -155,19 +155,16 @@ Note: `status = split` should be handled by Step 3 (Split Check). Treat unexpect
 
 ### 8. Review (Claude + Cross-Review)
 
-Invoke `/review` skill:
+1. Claude assesses the step against done conditions (verdict: PASS/FIX/BLOCKED, as JSON).
+2. Run `ccb-review` for cross-review + merge:
 
 ```
-/review step
-  target: [step title]
-  doneConditions: [from design output]
-  changedFiles: [from FileOpsRES]
-  proof: [execution summary]
+Bash(ccb-review "Step review: [step title]. Done conditions: [conditions]. Changed files: [files]." <<'VERDICT'
+{"verdict":"...","reason":"...","fixItems":[...]}
+VERDICT)
 ```
 
-See `../../review/references/flow.md` for full flow (Claude assessment → role-routed cross-review → Final decision).
-
-Output: Review result with verdict (PASS/FIX/BLOCKED).
+Output: Merged verdict JSON with `verdict`, `fixItems`, `claudeVerdict`, `crossVerdict`.
 
 ### 8.5 Test (Optional)
 
@@ -234,19 +231,16 @@ Triggered when Step 9 Finalize detects all steps completed (`current.type == 'no
 
 #### 10.1 Full Task Review
 
-Invoke `/review` skill with task mode:
+1. Claude assesses the full task against acceptance criteria (verdict JSON).
+2. Run `ccb-review` for cross-review + merge:
 
 ```
-/review task
-  target: [task name from state.json]
-  doneConditions: [acceptance criteria]
-  changedFiles: [all files changed during task]
-  proof: [all step summaries]
+Bash(ccb-review "Task review: [task name]. Acceptance criteria: [criteria]. All changed files: [files]." <<'VERDICT'
+{"verdict":"...","reason":"...","fixItems":[...]}
+VERDICT)
 ```
 
-See `../../review/references/flow.md` for full flow.
-
-Output: Task-level review result.
+Output: Merged verdict JSON.
 
 #### 10.2 Issue Handling
 

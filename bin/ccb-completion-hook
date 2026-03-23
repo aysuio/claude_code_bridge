@@ -158,7 +158,8 @@ def send_via_wezterm(pane_id: str, message: str, session_data: dict) -> bool:
         )
         if result.returncode == 0:
             import time
-            time.sleep(0.1)
+            paste_delay = float(os.environ.get("CCB_WEZTERM_PASTE_DELAY", "0.5"))
+            time.sleep(paste_delay)
             # Send Enter to submit the pasted content.
             # Prefer send-key (works with raw-mode TUIs like Claude Code);
             # fall back to CR byte for older WezTerm versions without send-key.

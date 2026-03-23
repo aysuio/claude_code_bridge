@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""
+ccb-review - Deterministic cross-review via Codex (or other provider).
+
+Usage:
+    ccb-review --claude-verdict '<JSON>' <message>
+    ccb-review --claude-verdict '<JSON>' --scope "lib/foo.py" <message>
+
+Claude does its own assessment first, then passes the verdict JSON to this script.
+This script:
+  1. Sends cross-review request to reviewer (default: codex)
+  2. Merges both verdicts deterministically
+  3. Outputs final decision as JSON
+
+No LLM prompt interpretation needed for control flow.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# Setup lib path
+script_dir = Path(__file__).resolve().parent
+lib_dir = script_dir.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
+from compat import setup_windows_encoding
+
+setup_windows_encoding()
+
+
+def _find_ask() -> str:
+    """Find the ask command."""
+    local = script_dir / "ask"
+    if local.exists():
+        return str(local)
+    found = shutil.which("ask")
+    if found:
+        return found
+    return "ask"
+
+
+def _ask(provider: str, message: str, *, timeout: int = 600) -> tuple[int, str]:
+    """Call ask <provider> --foreground synchronously, return (exit_code, reply)."""
+    ask_cmd = _find_ask()
+    env = os.environ.copy()
+    env["CCB_CALLER"] = "ccb-review"
+
+    try:
+        result = subprocess.run(
+            [sys.executable, ask_cmd, provider, "--foreground", message],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        return result.returncode, result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return 1, "[TIMEOUT]"
+    except Exception as e:
+        return 1, f"[ERROR] {e}"
+
+
+def _parse_json_from_reply(reply: str) -> dict | None:
+    """Try to extract JSON from a reply that may contain non-JSON text."""
+    try:
+        return json.loads(reply)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    start = reply.find("{")
+    end = reply.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(reply[start : end + 1])
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def _merge_verdicts(claude_verdict: dict, cross_verdict: dict) -> dict:
+    """Merge two review verdicts into a final decision."""
+    cv = (claude_verdict.get("verdict") or "").upper()
+    xv = (cross_verdict.get("verdict") or "").upper()
+
+    # BLOCKED takes precedence over everything
+    if cv == "BLOCKED" or xv == "BLOCKED":
+        verdict = "BLOCKED"
+        reason = f"Blocked by {'Claude' if cv == 'BLOCKED' else 'cross-reviewer'}"
+    elif cv == "PASS" and xv == "PASS":
+        verdict = "PASS"
+        reason = "Both reviewers agree: PASS"
+    elif cv == "PASS" and xv == "FIX":
+        verdict = "FIX"
+        reason = "Cross-reviewer found issues"
+    elif cv == "FIX" and xv == "PASS":
+        verdict = "FIX"
+        reason = "Claude found issues"
+    elif cv == "FIX" and xv == "FIX":
+        verdict = "FIX"
+        reason = "Both reviewers found issues"
+    else:
+        verdict = "FIX"
+        reason = f"Uncertain verdicts: claude={cv}, cross={xv}"
+
+    # Merge fix items
+    fix_items = []
+    for item in claude_verdict.get("fixItems", []):
+        if isinstance(item, dict):
+            fix_items.append(item)
+        elif isinstance(item, str):
+            fix_items.append({"issue": item})
+    for item in cross_verdict.get("fixItems", []):
+        if isinstance(item, dict):
+            fix_items.append(item)
+        elif isinstance(item, str):
+            fix_items.append({"issue": item})
+
+    # Deduplicate by issue text
+    seen = set()
+    unique_items = []
+    for item in fix_items:
+        key = (item.get("file", ""), item.get("issue", ""))
+        if key not in seen:
+            seen.add(key)
+            unique_items.append(item)
+
+    return {
+        "verdict": verdict,
+        "reason": reason,
+        "claudeVerdict": cv,
+        "crossVerdict": xv,
+        "fixItems": unique_items,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Cross-review via provider, merge with Claude's verdict")
+    parser.add_argument("message", nargs="+", help="Review request / criteria")
+    parser.add_argument("--claude-verdict", default="", help="Claude's assessment as JSON string (or pass via stdin)")
+    parser.add_argument("--reviewer", default="codex", help="Cross-review provider (default: codex)")
+    parser.add_argument("--scope", default="", help="Files/modules to review")
+    parser.add_argument("--timeout", type=int, default=600, help="Timeout per provider call in seconds")
+    args = parser.parse_args()
+
+    message = " ".join(args.message)
+    reviewer = args.reviewer
+    scope = args.scope
+
+    # Parse Claude's verdict: from --claude-verdict arg or stdin
+    verdict_raw = args.claude_verdict
+    if not verdict_raw and not sys.stdin.isatty():
+        verdict_raw = sys.stdin.read().strip()
+    if not verdict_raw:
+        print("[ccb-review] No Claude verdict provided (use --claude-verdict or pipe via stdin)", file=sys.stderr)
+        return 2
+    claude_data = _parse_json_from_reply(verdict_raw)
+    if not claude_data:
+        print("[ccb-review] Could not parse Claude verdict as JSON", file=sys.stderr)
+        return 2
+
+    cv = (claude_data.get("verdict") or "UNKNOWN").upper()
+    scope_text = f"\nScope: {scope}" if scope else ""
+
+    # ── Cross-review ──
+    print(f"[ccb-review] Sending cross-review to {reviewer}...", file=sys.stderr, flush=True)
+
+    cross_prompt = f"""Cross-review:
+
+{message}{scope_text}
+
+Claude verdict: {cv} - {claude_data.get('reason', '')}
+
+Your assessment:
+1. Agree with Claude?
+2. Issues Claude missed?
+3. Verdict: PASS or FIX?
+
+If FIX, list items with severity (high/medium/low), max 5.
+Return JSON only:
+{{ "verdict": "PASS or FIX", "agreedWithClaude": true/false, "missedIssues": [], "fixItems": [{{"file": "...", "issue": "...", "severity": "high|medium|low"}}] }}"""
+
+    rc, cross_reply = _ask(reviewer, cross_prompt, timeout=args.timeout)
+    if rc != 0:
+        print(f"[ccb-review] {reviewer} failed: {cross_reply}", file=sys.stderr)
+        cross_data = {"verdict": "UNKNOWN", "fixItems": []}
+    else:
+        cross_data = _parse_json_from_reply(cross_reply)
+        if not cross_data:
+            print(f"[ccb-review] Could not parse {reviewer} response as JSON", file=sys.stderr)
+            cross_data = {"verdict": "UNKNOWN", "fixItems": []}
+
+    xv = (cross_data.get("verdict") or "UNKNOWN").upper()
+    print(f"[ccb-review] {reviewer} verdict: {xv}", file=sys.stderr, flush=True)
+
+    # ── Merge ──
+    final = _merge_verdicts(claude_data, cross_data)
+
+    # Output JSON to stdout
+    print(json.dumps(final, ensure_ascii=False, indent=2))
+
+    # exit 0 = review completed (regardless of verdict), nonzero = execution error
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

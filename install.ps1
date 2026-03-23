@@ -34,7 +34,7 @@ $script:SCRIPTS_TO_LINK = @(
   "oask", "opend", "oping",
   "lask", "lpend", "lping",
   "dask", "dpend", "dping",
-  "ask", "ccb-ping", "pend", "autonew", "ccb-completion-hook", "maild"
+  "ask", "ccb-ping", "pend", "autonew", "ccb-completion-hook", "maild", "ccb-review"
 )
 
 $script:CLAUDE_MARKDOWN = @(
@@ -258,7 +258,7 @@ function Install-Native {
     "oask", "oping", "opend",
     "lask", "lping", "lpend",
     "dask", "dping", "dpend",
-    "ask", "ccb-ping", "pend", "autonew", "ccb-completion-hook", "maild"
+    "ask", "ccb-ping", "pend", "autonew", "ccb-completion-hook", "maild", "ccb-review"
   )
 
   # In MSYS/Git-Bash, invoking the script file directly will honor the shebang.
