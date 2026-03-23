@@ -360,6 +360,32 @@ function Install-Native {
     Write-Warning "WezTerm configuration skipped: $_"
   }
 
+  # Restart askd daemons so they load the updated code
+  $askdDir = Join-Path $env:USERPROFILE ".cache\ccb\projects"
+  if (-not (Test-Path $askdDir)) {
+    # Also check LOCALAPPDATA
+    $askdDir = Join-Path $env:LOCALAPPDATA "ccb\projects"
+  }
+  if (Test-Path $askdDir) {
+    $restarted = 0
+    Get-ChildItem -Path $askdDir -Recurse -Filter "askd.json" | ForEach-Object {
+      try {
+        $state = Get-Content $_.FullName -Raw | ConvertFrom-Json
+        $daemonPid = [int]$state.pid
+        if ($daemonPid -gt 0) {
+          $proc = Get-Process -Id $daemonPid -ErrorAction SilentlyContinue
+          if ($proc) {
+            Stop-Process -Id $daemonPid -Force -ErrorAction SilentlyContinue
+            $restarted++
+          }
+        }
+      } catch {}
+    }
+    if ($restarted -gt 0) {
+      Write-Host "Restarted $restarted askd daemon(s) (will auto-start on next use)"
+    }
+  }
+
   Write-Host ""
   Write-Host "Installation complete!"
   Write-Host "Restart your terminal (WezTerm) for PATH changes to take effect."

@@ -1553,6 +1553,23 @@ install_all() {
   install_clinerules_config
   install_settings_permissions
   install_tmux_config
+
+  # Restart askd daemons so they load the updated code
+  local askd_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ccb/projects"
+  if [[ -d "$askd_dir" ]]; then
+    local restarted=0
+    while IFS= read -r state_file; do
+      local pid
+      pid=$(python3 -c "import json; print(json.load(open('$state_file')).get('pid',0))" 2>/dev/null || echo 0)
+      if [[ "$pid" -gt 0 ]] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null && restarted=$((restarted + 1))
+      fi
+    done < <(find "$askd_dir" -name "askd.json" 2>/dev/null)
+    if [[ "$restarted" -gt 0 ]]; then
+      echo "Restarted $restarted askd daemon(s) (will auto-start on next use)"
+    fi
+  fi
+
   echo "OK: Installation complete"
   echo "   Project dir    : $INSTALL_PREFIX"
   echo "   Executable dir : $BIN_DIR"
