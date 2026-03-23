@@ -54,7 +54,8 @@ def _ask(provider: str, message: str, *, timeout: int = 600) -> tuple[int, str]:
 
     try:
         result = subprocess.run(
-            [sys.executable, ask_cmd, provider, "--foreground", message],
+            [sys.executable, ask_cmd, provider, "--foreground"],
+            input=message,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -179,11 +180,12 @@ Claude verdict: {cv} - {claude_data.get('reason', '')}
 Your assessment:
 1. Agree with Claude?
 2. Issues Claude missed?
-3. Verdict: PASS or FIX?
+3. Verdict: PASS, FIX, or BLOCKED?
 
 If FIX, list items with severity (high/medium/low), max 5.
+If BLOCKED, explain why.
 Return JSON only:
-{{ "verdict": "PASS or FIX", "agreedWithClaude": true/false, "missedIssues": [], "fixItems": [{{"file": "...", "issue": "...", "severity": "high|medium|low"}}] }}"""
+{{ "verdict": "PASS|FIX|BLOCKED", "agreedWithClaude": true/false, "missedIssues": [], "fixItems": [{{"file": "...", "issue": "...", "severity": "high|medium|low"}}] }}"""
 
     rc, cross_reply = _ask(reviewer, cross_prompt, timeout=args.timeout)
     if rc != 0:

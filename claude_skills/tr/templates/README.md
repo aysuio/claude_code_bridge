@@ -23,7 +23,7 @@ Replace placeholders before sending:
 |-------------|--------|
 | stepIndex | FileOpsRES.data.state.current.stepIndex |
 | substeps | step design output.proposedSubsteps |
-| verification | /review output.finalDecision.reason |
+| verification | ccb-review output.reason |
 | changedFiles | FileOpsRES.changedFiles |
 | stepTitle | current step title |
 | taskName | state.json.task |

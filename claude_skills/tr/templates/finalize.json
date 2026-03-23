@@ -12,7 +12,7 @@
   "report": { "changedFiles": true, "diffSummary": true, "commandOutputs": "on_failure" },
   "_meta": {
     "placeholders": {
-      "verification": "short description of how step was verified (from /review output)",
+      "verification": "short description of how step was verified (from ccb-review output)",
       "changedFiles": "optional array of changed file paths (from FileOpsRES.changedFiles)",
       "stepIndex": "step number for commit message (prefer 1-based; if state uses 0-based, use stepIndex+1)",
       "stepTitle": "current step title for commit message"

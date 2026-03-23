@@ -70,11 +70,7 @@ Round N changes:
 
 #### 2.1 Resolve Reviewer
 
-Resolve the `reviewer` role using the same two-layer lookup as `/review`:
-1. CLAUDE.md Role Assignment table
-2. `.autoflow/roles.json` override
-
-Default: `codex`
+Default: `codex`. The reviewer can be overridden via `--reviewer` flag when calling `ccb-review`.
 
 #### 2.2 Claude Assessment
 
@@ -96,33 +92,17 @@ Output:
 }
 ```
 
-#### 2.3 Cross-Review (Provider)
+#### 2.3 Cross-Review via ccb-review
 
-**MANDATORY**: Use `Bash` with `run_in_background=true` to send the cross-review request. This runs asynchronously — Claude can continue working while the reviewer processes. When the reviewer finishes, Claude receives a `<task-notification>` with the result automatically. Do NOT use the `/ask` skill (ends the turn and requires manual `/pend`) or `wezterm cli` directly.
+**MANDATORY**: Use the `ccb-review` script for cross-review. Pipe your Claude assessment JSON via stdin. The script handles sending to the reviewer, waiting for response, and merging verdicts.
 
 ```
-Bash(CCB_CALLER=claude ask <reviewer> --foreground "Refine cross-review:
-
-Goal: [goal]
-Scope: [scope]
-Acceptance criteria: [acceptance_criteria]
-Round: [N]
-Changes this round: [change summary]
-Claude verdict: [PASS|FIX] - [reason]
-
-Your review:
-1. Agree with Claude?
-2. Issues Claude missed?
-3. Verdict: PASS or FIX?
-
-If FIX, list items with severity (high/medium/low), max 5.
-Return JSON only:
-{ verdict, agreedWithClaude, missedIssues, fixItems: [{ file, issue, severity }] }", run_in_background=true)
+Bash(ccb-review "Refine round [N]: [goal]. Scope: [scope]. Criteria: [acceptance_criteria]." <<'VERDICT'
+<your Claude assessment JSON from step 2.2>
+VERDICT)
 ```
 
-While waiting for the cross-review, Claude may continue with other work (e.g., preparing for potential fixes, reviewing other files in scope).
-
-When the `<task-notification>` arrives with the reviewer's response, parse it and proceed to Step 3 (Normalize Fix List). If the task times out or fails, use `/pend <reviewer>` as fallback.
+The script outputs merged verdict JSON to stdout. Parse it and proceed to Step 3 (Normalize Fix List).
 
 ### 3. Normalize Fix List
 

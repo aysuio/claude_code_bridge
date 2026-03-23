@@ -1,118 +1,70 @@
 # Review
 
-Dual review by Claude (initial assessment) and a configurable cross-review provider (Codex by default).
-
-## Modes
-
-- `mode=step`: Review single step execution (used by /tr Step 7)
-- `mode=task`: Review entire task completion (used by /tr Step 9.1)
-
-## Input
-
-| Field | step mode | task mode |
-|-------|-----------|-----------|
-| target | Step title | Task name |
-| doneConditions | Step done conditions | Acceptance criteria |
-| changedFiles | Files changed in step | All files changed |
-| proof | Execution output | All step summaries |
+Dual review: Claude assesses first, then `ccb-review` script handles cross-review and verdict merging deterministically.
 
 ## Execution Flow
 
-### 0. Resolve Cross-Review Provider
-
-Resolve the `reviewer` role using a two-layer lookup:
-
-1. **CLAUDE.md Role Assignment table** (primary): Read the Role Assignment table in CLAUDE.md. The `reviewer` role maps to a provider (e.g., `codex`, `gemini`).
-2. **`.autoflow/roles.json`** (override): If this file exists in the repo, and `enabled == true` and `schemaVersion == 1`, use its `reviewer` field to override.
-
-Default: `codex`
-
-Implementation detail: Claude must not read repo files directly; request file reads via `/file-op` (`read_file`) and parse the JSON response.
-
 ### 1. Claude Initial Assessment
 
-Evaluate against done conditions / acceptance criteria:
+Evaluate against the user's criteria:
 - What was accomplished?
 - Are all conditions met?
 - Any issues or risks?
 
-Preliminary verdict: **PASS** / **FIX** / **UNCERTAIN**
-
-### 2. Cross-Review (Provider)
-
-**MANDATORY**: Use `Bash` with `run_in_background=true` to send the cross-review request. Claude can continue working while the reviewer processes. When done, Claude receives a `<task-notification>` with the result. Do NOT use the `/ask` skill (ends the turn) or `wezterm cli` directly.
-
-```
-Bash(CCB_CALLER=claude ask <provider> --foreground "Cross-review:
-
-Mode: [step|task]
-Target: [step title / task name]
-Conditions: [done conditions / acceptance]
-Claude verdict: [PASS/FIX/UNCERTAIN] - [reason]
-
-Your assessment:
-1. Agree with Claude's verdict?
-2. Issues Claude missed?
-3. Final recommendation: PASS or FIX?
-
-If FIX, list specific items (max 3).
-Return JSON only.", run_in_background=true)
+Output as JSON:
+```json
+{"verdict": "PASS|FIX|BLOCKED", "reason": "...", "fixItems": [{"file": "...", "issue": "...", "severity": "high|medium|low"}]}
 ```
 
-When the `<task-notification>` arrives, parse the response and proceed to Step 3 (Final Decision). If the task times out or fails, use `/pend <provider>` as fallback.
+### 2. Cross-Review via ccb-review
 
-### 3. Final Decision
+Pass Claude's verdict to `ccb-review` via stdin. The script:
+- Sends cross-review request to reviewer (default: codex, override with `--reviewer`)
+- Waits for response
+- Merges both verdicts deterministically
 
-| Claude | Cross-review | Result |
-|--------|-------------|--------|
-| PASS | PASS | → PASS (continue) |
-| PASS | FIX | → FIX (Claude decides) |
-| FIX | PASS | → FIX (merge items) |
-| FIX | FIX | → FIX (merge items) |
-| UNCERTAIN | * | → Claude makes final call |
+```
+Bash(ccb-review "review message" <<'VERDICT'
+{"verdict":"...","reason":"...","fixItems":[...]}
+VERDICT)
+```
 
-## Output Schema
+With scope:
+```
+Bash(ccb-review --scope "lib/foo.py" "review message" <<'VERDICT'
+{"verdict":"...","reason":"...","fixItems":[...]}
+VERDICT)
+```
+
+### 3. Report Result
+
+The script outputs merged verdict JSON to stdout:
 
 ```json
 {
-  "mode": "step|task",
-  "target": "<step title or task name>",
-  "crossReviewer": "codex|gemini",
   "verdict": "PASS|FIX|BLOCKED",
-  "claudeAssessment": {
-    "verdict": "PASS|FIX|UNCERTAIN",
-    "reason": "<reason>"
-  },
-  "crossAssessment": {
-    "verdict": "PASS|FIX",
-    "agreedWithClaude": true,
-    "missedIssues": ["<issue>"],
-    "fixItems": ["<item>"]
-  },
-  "finalDecision": {
-    "verdict": "PASS|FIX|BLOCKED",
-    "reason": "<reason>",
-    "fixItems": ["<if FIX>"]
-  }
+  "reason": "...",
+  "claudeVerdict": "PASS|FIX|BLOCKED",
+  "crossVerdict": "PASS|FIX|BLOCKED",
+  "fixItems": [{"file": "...", "issue": "...", "severity": "high|medium|low"}]
 }
 ```
 
-## Mode-Specific Checklist
+Present the result to the user.
 
-### step mode
-- Done conditions satisfied?
-- Code changes correct?
-- No regressions introduced?
+## Verdict Merge Rules
 
-### task mode
-- All acceptance criteria met?
-- Gaps or missing pieces?
-- Code quality issues?
-- Documentation complete?
-- Tests passing?
+| Claude | Cross-review | Result |
+|--------|-------------|--------|
+| BLOCKED | * | → BLOCKED |
+| * | BLOCKED | → BLOCKED |
+| PASS | PASS | → PASS |
+| PASS | FIX | → FIX |
+| FIX | PASS | → FIX |
+| FIX | FIX | → FIX |
 
 ## Principles
 
-1. **Unified schema**: Same output format for both modes
-2. **Mode-specific prompts**: Different checklists per mode
-3. **Traceable**: Full assessment captured for plan_log/report
+1. **Deterministic**: Verdict merging is code, not LLM interpretation
+2. **Traceable**: Both verdicts preserved in output
+3. **Simple**: Claude assesses, script does the rest
