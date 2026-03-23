@@ -130,6 +130,7 @@ SCRIPTS_TO_LINK=(
   bin/autonew
   bin/ccb-completion-hook
   bin/ccb-review
+  bin/ccb-session
   bin/maild
   bin/ctx-transfer
   ccb

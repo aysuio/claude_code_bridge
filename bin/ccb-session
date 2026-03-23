@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""
+ccb-session - Save, list, restore, and delete CCB session snapshots.
+
+Usage:
+    ccb-session save [name] [--desc "description"]
+    ccb-session list
+    ccb-session restore <name>
+    ccb-session delete <name>
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+script_dir = Path(__file__).resolve().parent
+lib_dir = script_dir.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
+from compat import setup_windows_encoding
+
+setup_windows_encoding()
+
+SESSION_FILES = [
+    ".claude-session",
+    ".codex-session",
+    ".gemini-session",
+    ".opencode-session",
+    ".droid-session",
+    ".codebuddy-session",
+    ".copilot-session",
+    ".qwen-session",
+]
+
+
+def _ccb_dir() -> Path:
+    """Find .ccb directory, walking up from cwd."""
+    current = Path.cwd().resolve()
+    for root in [current, *current.parents]:
+        candidate = root / ".ccb"
+        if candidate.is_dir():
+            return candidate
+    # Default to cwd/.ccb
+    return current / ".ccb"
+
+
+def _sessions_dir() -> Path:
+    return _ccb_dir() / "sessions"
+
+
+def _active_sessions(ccb: Path) -> list[tuple[str, dict]]:
+    """Return list of (filename, data) for active session files."""
+    results = []
+    for name in SESSION_FILES:
+        path = ccb / name
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                results.append((name, data))
+            except Exception:
+                pass
+    return results
+
+
+def _provider_from_filename(filename: str) -> str:
+    return filename.replace(".", "").replace("-session", "")
+
+
+def cmd_save(args: argparse.Namespace) -> int:
+    ccb = _ccb_dir()
+    if not ccb.exists():
+        print("[ccb-session] No .ccb directory found", file=sys.stderr)
+        return 1
+
+    active = _active_sessions(ccb)
+    if not active:
+        print("[ccb-session] No active session files found", file=sys.stderr)
+        return 1
+
+    name = args.name or datetime.now().strftime("%Y%m%d-%H%M%S")
+    sessions_dir = _sessions_dir()
+    target = sessions_dir / name
+
+    if target.exists():
+        print(f"[ccb-session] Session '{name}' already exists. Use a different name or delete it first.", file=sys.stderr)
+        return 1
+
+    target.mkdir(parents=True, exist_ok=True)
+
+    # Copy session files
+    copied = []
+    for filename, data in active:
+        src = ccb / filename
+        shutil.copy2(str(src), str(target / filename))
+        provider = _provider_from_filename(filename)
+        session_id = data.get("session_id") or data.get("codex_session_id") or ""
+        copied.append(provider)
+
+    # Write meta
+    meta = {
+        "name": name,
+        "saved_at": datetime.now().isoformat(),
+        "description": args.desc or "",
+        "providers": copied,
+        "work_dir": str(Path.cwd()),
+    }
+    (target / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    print(f"Saved session '{name}' ({', '.join(copied)})")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    sessions_dir = _sessions_dir()
+    if not sessions_dir.exists():
+        print("No saved sessions.")
+        return 0
+
+    entries = []
+    for d in sorted(sessions_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        meta_path = d / "meta.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        else:
+            meta = {}
+
+        name = d.name
+        saved_at = meta.get("saved_at", "?")
+        providers = meta.get("providers", [])
+        desc = meta.get("description", "")
+
+        # Count session files
+        session_count = sum(1 for f in SESSION_FILES if (d / f).exists())
+
+        entries.append((name, saved_at, ", ".join(providers), desc))
+
+    if not entries:
+        print("No saved sessions.")
+        return 0
+
+    # Print table
+    print(f"{'Name':<25} {'Saved':<22} {'Providers':<30} {'Description'}")
+    print("-" * 90)
+    for name, saved_at, providers, desc in entries:
+        # Truncate saved_at to readable format
+        try:
+            dt = datetime.fromisoformat(saved_at)
+            saved_str = dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            saved_str = saved_at[:19]
+        print(f"{name:<25} {saved_str:<22} {providers:<30} {desc}")
+
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    name = args.name
+    sessions_dir = _sessions_dir()
+    source = sessions_dir / name
+
+    if not source.exists():
+        print(f"[ccb-session] Session '{name}' not found", file=sys.stderr)
+        # Show available
+        if sessions_dir.exists():
+            available = [d.name for d in sessions_dir.iterdir() if d.is_dir()]
+            if available:
+                print(f"  Available: {', '.join(available)}", file=sys.stderr)
+        return 1
+
+    ccb = _ccb_dir()
+
+    # Auto-save current session before restoring
+    active = _active_sessions(ccb)
+    if active:
+        autosave_name = f"_autosave-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        autosave_dir = sessions_dir / autosave_name
+        autosave_dir.mkdir(parents=True, exist_ok=True)
+        providers = []
+        for filename, data in active:
+            shutil.copy2(str(ccb / filename), str(autosave_dir / filename))
+            providers.append(_provider_from_filename(filename))
+        meta = {
+            "name": autosave_name,
+            "saved_at": datetime.now().isoformat(),
+            "description": f"Auto-saved before restoring '{name}'",
+            "providers": providers,
+            "work_dir": str(Path.cwd()),
+        }
+        (autosave_dir / "meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Auto-saved current session as '{autosave_name}'")
+
+    # Restore session files
+    restored = []
+    for filename in SESSION_FILES:
+        src = source / filename
+        if src.exists():
+            dst = ccb / filename
+            shutil.copy2(str(src), str(dst))
+            restored.append(_provider_from_filename(filename))
+
+    print(f"Restored session '{name}' ({', '.join(restored)})")
+    print("Restart CCB to use the restored session.")
+    return 0
+
+
+def cmd_delete(args: argparse.Namespace) -> int:
+    name = args.name
+    sessions_dir = _sessions_dir()
+    target = sessions_dir / name
+
+    if not target.exists():
+        print(f"[ccb-session] Session '{name}' not found", file=sys.stderr)
+        return 1
+
+    shutil.rmtree(str(target))
+    print(f"Deleted session '{name}'")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="CCB session backup & restore")
+    sub = parser.add_subparsers(dest="command")
+
+    save_p = sub.add_parser("save", help="Save current session")
+    save_p.add_argument("name", nargs="?", default="", help="Session name (default: timestamp)")
+    save_p.add_argument("--desc", default="", help="Description")
+
+    sub.add_parser("list", help="List saved sessions")
+
+    restore_p = sub.add_parser("restore", help="Restore a saved session")
+    restore_p.add_argument("name", help="Session name to restore")
+
+    delete_p = sub.add_parser("delete", help="Delete a saved session")
+    delete_p.add_argument("name", help="Session name to delete")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    commands = {
+        "save": cmd_save,
+        "list": cmd_list,
+        "restore": cmd_restore,
+        "delete": cmd_delete,
+    }
+    return commands[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
