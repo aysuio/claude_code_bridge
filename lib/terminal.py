@@ -332,7 +332,7 @@ def get_shell_type() -> str:
 
 class TerminalBackend(ABC):
     @abstractmethod
-    def send_text(self, pane_id: str, text: str) -> None: ...
+    def send_text(self, pane_id: str, text: str, *, force_no_paste: bool = False) -> None: ...
     @abstractmethod
     def is_alive(self, pane_id: str) -> bool: ...
     @abstractmethod
@@ -632,7 +632,7 @@ class TmuxBackend(TerminalBackend):
         except Exception:
             pass
 
-    def send_text(self, pane_id: str, text: str) -> None:
+    def send_text(self, pane_id: str, text: str, *, force_no_paste: bool = False) -> None:
         sanitized = (text or "").replace("\r", "").strip()
         if not sanitized:
             return
@@ -940,17 +940,18 @@ class WeztermBackend(TerminalBackend):
             if attempt < max_retries - 1:
                 time.sleep(0.05)
 
-    def send_text(self, pane_id: str, text: str) -> None:
+    def send_text(self, pane_id: str, text: str, *, force_no_paste: bool = False) -> None:
         sanitized = text.replace("\r", "").strip()
         if not sanitized:
             return
 
         has_newlines = "\n" in sanitized
 
-        # Single-line: always avoid paste mode (prevents Codex showing "[Pasted Content ...]").
-        # Use argv for short text; stdin for long text to avoid command-line length/escaping issues.
-        if not has_newlines:
-            if len(sanitized) <= 200:
+        # Single-line or force_no_paste: always avoid paste mode.
+        # force_no_paste is needed for TUIs (e.g. Codex CLI) that don't handle
+        # bracketed paste correctly — they split pasted text into fragments.
+        if not has_newlines or force_no_paste:
+            if len(sanitized) <= 200 and not has_newlines:
                 _run(
                     [*self._cli_base_args(), "send-text", "--pane-id", pane_id, "--no-paste", sanitized],
                     check=True,
@@ -961,10 +962,15 @@ class WeztermBackend(TerminalBackend):
                     input=sanitized.encode("utf-8"),
                     check=True,
                 )
+            # For large no-paste payloads, add settle delay before Enter
+            if force_no_paste and has_newlines:
+                paste_delay = _env_float("CCB_WEZTERM_PASTE_DELAY", 0.1)
+                if paste_delay:
+                    time.sleep(paste_delay)
             self._send_enter(pane_id)
             return
 
-        # Slow path: multiline or long text -> use paste mode (bracketed paste)
+        # Slow path: multiline text -> use paste mode (bracketed paste)
         _run(
             [*self._cli_base_args(), "send-text", "--pane-id", pane_id],
             input=sanitized.encode("utf-8"),
@@ -1143,7 +1149,14 @@ class WeztermBackend(TerminalBackend):
             path = unquote(path)
         except Exception:
             pass
-        return path.rstrip("/") or "/"
+        # On Windows, file:///E:/path yields /E:/path — strip the leading slash
+        if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+        stripped = path.rstrip("/")
+        # Preserve drive root: "E:" → "E:/"
+        if os.name == "nt" and len(stripped) == 2 and stripped[1] == ":":
+            return stripped + "/"
+        return stripped or "/"
 
     @staticmethod
     def _cwd_matches(pane_cwd: str, work_dir: str) -> bool:

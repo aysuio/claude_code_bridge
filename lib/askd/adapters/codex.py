@@ -142,7 +142,7 @@ class CodexAdapter(BaseProviderAdapter):
             work_dir=Path(session.work_dir),
         )
         state = reader.capture_state()
-        backend.send_text(pane_id, prompt)
+        backend.send_text(pane_id, prompt, force_no_paste=True)
 
         deadline = None if float(req.timeout_s) < 0.0 else (time.time() + float(req.timeout_s))
         chunks: list[str] = []

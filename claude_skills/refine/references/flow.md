@@ -98,8 +98,10 @@ Output:
 
 #### 2.3 Cross-Review (Provider)
 
+**MANDATORY**: Use `Bash` with `run_in_background=true` to send the cross-review request. This runs asynchronously — Claude can continue working while the reviewer processes. When the reviewer finishes, Claude receives a `<task-notification>` with the result automatically. Do NOT use the `/ask` skill (ends the turn and requires manual `/pend`) or `wezterm cli` directly.
+
 ```
-/ask <reviewer> "Refine cross-review:
+Bash(CCB_CALLER=claude ask <reviewer> --foreground "Refine cross-review:
 
 Goal: [goal]
 Scope: [scope]
@@ -115,8 +117,12 @@ Your review:
 
 If FIX, list items with severity (high/medium/low), max 5.
 Return JSON only:
-{ verdict, agreedWithClaude, missedIssues, fixItems: [{ file, issue, severity }] }"
+{ verdict, agreedWithClaude, missedIssues, fixItems: [{ file, issue, severity }] }", run_in_background=true)
 ```
+
+While waiting for the cross-review, Claude may continue with other work (e.g., preparing for potential fixes, reviewing other files in scope).
+
+When the `<task-notification>` arrives with the reviewer's response, parse it and proceed to Step 3 (Normalize Fix List). If the task times out or fails, use `/pend <reviewer>` as fallback.
 
 ### 3. Normalize Fix List
 

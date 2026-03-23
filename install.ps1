@@ -221,7 +221,7 @@ function Install-Native {
     New-Item -ItemType Directory -Path $binDir -Force | Out-Null
   }
 
-  $items = @("ccb", "lib", "bin", "commands", "mcp", "droid_skills")
+  $items = @("ccb", "lib", "bin", "commands", "mcp", "droid_skills", "config")
   foreach ($item in $items) {
     $src = Join-Path $repoRoot $item
     $dst = Join-Path $InstallPrefix $item

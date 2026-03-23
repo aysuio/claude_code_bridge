@@ -40,12 +40,10 @@ Preliminary verdict: **PASS** / **FIX** / **UNCERTAIN**
 
 ### 2. Cross-Review (Provider)
 
-If provider is:
-- `codex` → use `/ask codex`
-- `gemini` → use `/ask gemini`
+**MANDATORY**: Use `Bash` with `run_in_background=true` to send the cross-review request. Claude can continue working while the reviewer processes. When done, Claude receives a `<task-notification>` with the result. Do NOT use the `/ask` skill (ends the turn) or `wezterm cli` directly.
 
 ```
-/ask <provider> "Cross-review:
+Bash(CCB_CALLER=claude ask <provider> --foreground "Cross-review:
 
 Mode: [step|task]
 Target: [step title / task name]
@@ -58,8 +56,10 @@ Your assessment:
 3. Final recommendation: PASS or FIX?
 
 If FIX, list specific items (max 3).
-Return JSON only."
+Return JSON only.", run_in_background=true)
 ```
+
+When the `<task-notification>` arrives, parse the response and proceed to Step 3 (Final Decision). If the task times out or fails, use `/pend <provider>` as fallback.
 
 ### 3. Final Decision
 
